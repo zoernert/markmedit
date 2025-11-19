@@ -1,0 +1,51 @@
+import { describe, it, expect } from 'vitest';
+import { MCPServerManager } from '../services/mcp-generic.js';
+
+const baseUrl = 'http://localhost:9999';
+
+describe('MCPServerManager', () => {
+  const servers = [
+    {
+      id: 'general-knowledge',
+      name: 'General Knowledge Service',
+      url: baseUrl,
+      type: 'http' as const,
+      description: 'General purpose reasoning and chat support',
+    },
+    {
+      id: 'edifact-specialist',
+      name: 'EDIFACT Specialist',
+      url: baseUrl,
+      type: 'http' as const,
+      description: 'Focuses on EDIFACT, UTILMD, and MaKo market processes',
+      defaultTools: {
+        edifactAnalyze: 'edifact-analyze',
+      },
+    },
+    {
+      id: 'disabled-service',
+      name: 'Disabled Service',
+      url: baseUrl,
+      type: 'http' as const,
+      description: 'Should be ignored because disabled',
+      enabled: false,
+    },
+  ];
+
+  const manager = new MCPServerManager(servers);
+
+  it('filters out disabled servers while keeping enabled ones', () => {
+    const ids = manager.getServerConfigs().map((config) => config.id);
+    expect(ids).toEqual(['general-knowledge', 'edifact-specialist']);
+  });
+
+  it('returns a best match based on keywords present in the description', () => {
+    const match = manager.findBestServer('Bitte eine EDIFACT Analyse durchführen');
+    expect(match?.getConfig().id).toBe('edifact-specialist');
+  });
+
+  it('falls back to the first available server when no keywords match', () => {
+    const match = manager.findBestServer('Explain generic topic unrelated to energy');
+    expect(match?.getConfig().id).toBe('general-knowledge');
+  });
+});

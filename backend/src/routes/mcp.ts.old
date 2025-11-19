@@ -1,0 +1,179 @@
+import { Router } from 'express';
+import { config } from '../config/index.js';
+import { getMCPClient } from '../services/mcp.js';
+import { AppError } from '../middleware/errorHandler.js';
+import { z } from 'zod';
+
+export const mcpRoutes = Router();
+
+const searchSchema = z.object({
+  query: z.string().min(1),
+  limit: z.number().min(1).max(100).optional(),
+  collection: z.enum(['mako', 'netz', 'combined']).default('combined'),
+});
+
+const chatSchema = z.object({
+  message: z.string().min(1),
+  collection: z.enum(['mako', 'netz', 'combined']).default('combined'),
+  contextSettings: z.any().optional(),
+});
+
+const reasoningSchema = z.object({
+  query: z.string().min(1),
+  useDetailedIntentAnalysis: z.boolean().optional(),
+  messages: z.array(z.object({
+    role: z.string(),
+    content: z.string(),
+  })).optional(),
+});
+
+const edifactSchema = z.object({
+  message: z.string().min(1),
+});
+
+const edifactChatSchema = z.object({
+  message: z.string().min(1),
+  edifactMessage: z.string().min(1),
+  history: z.array(z.object({
+    role: z.string(),
+    content: z.string(),
+  })).optional(),
+});
+
+const edifactModifySchema = z.object({
+  instruction: z.string().min(1),
+  currentMessage: z.string().min(1),
+});
+
+// Semantic search
+mcpRoutes.post('/search', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = searchSchema.parse(req.body);
+  const client = getMCPClient();
+
+  let result;
+  switch (data.collection) {
+    case 'mako':
+      result = await client.semanticSearch(data.query, { limit: data.limit });
+      break;
+    case 'netz':
+      result = await client.williNetzSearch(data.query, { limit: data.limit });
+      break;
+    case 'combined':
+      result = await client.combinedSearch(data.query, { limit: data.limit });
+      break;
+  }
+
+  res.json(result);
+});
+
+// Chat
+mcpRoutes.post('/chat', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = chatSchema.parse(req.body);
+  const client = getMCPClient();
+
+  let result;
+  switch (data.collection) {
+    case 'mako':
+      result = await client.chat(data.message, data.contextSettings);
+      break;
+    case 'netz':
+      result = await client.williNetzChat(data.message, data.contextSettings);
+      break;
+    case 'combined':
+      result = await client.combinedChat(data.message, data.contextSettings);
+      break;
+  }
+
+  res.json(result);
+});
+
+// Reasoning (complex analysis)
+mcpRoutes.post('/reasoning', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = reasoningSchema.parse(req.body);
+  const client = getMCPClient();
+
+  const result = await client.reasoning(data.query, {});
+
+  res.json(result);
+});
+
+// EDIFACT: Analyze
+mcpRoutes.post('/edifact/analyze', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = edifactSchema.parse(req.body);
+  const client = getMCPClient();
+
+  const result = await client.analyzeEdifact(data.message);
+  res.json(result);
+});
+
+// EDIFACT: Explain
+mcpRoutes.post('/edifact/explain', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = edifactSchema.parse(req.body);
+  const client = getMCPClient();
+
+  const result = await client.explainEdifact(data.message);
+  res.json(result);
+});
+
+// EDIFACT: Validate
+mcpRoutes.post('/edifact/validate', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = edifactSchema.parse(req.body);
+  const client = getMCPClient();
+
+  const result = await client.validateEdifact(data.message);
+  res.json(result);
+});
+
+// EDIFACT: Chat
+mcpRoutes.post('/edifact/chat', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = edifactChatSchema.parse(req.body);
+  const client = getMCPClient();
+
+  const result = await client.chatEdifact(
+    data.message,
+    data.edifactMessage,
+    data.history as any
+  );
+  res.json(result);
+});
+
+// EDIFACT: Modify
+mcpRoutes.post('/edifact/modify', async (req, res) => {
+  if (!config.features.enableMCP) {
+    throw new AppError(503, 'MCP not enabled');
+  }
+
+  const data = edifactModifySchema.parse(req.body);
+  const client = getMCPClient();
+
+  const result = await client.modifyEdifact(data.instruction, data.currentMessage);
+  res.json(result);
+});

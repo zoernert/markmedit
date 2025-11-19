@@ -1,0 +1,306 @@
+import { getMCPServer } from './mcp-manager.js';
+
+/**
+ * Legacy compatibility layer
+ * Wraps the generic MCP system to maintain backward compatibility
+ * with existing Willi-Mako specific code
+ */
+
+export async function initializeMCP(): Promise<void> {
+  // Deprecated - MCP is now initialized via getMCPManager()
+  console.warn('⚠ initializeMCP() is deprecated. MCP Manager is initialized automatically.');
+}
+
+export function getMCPClient() {
+  // Return the Willi-Mako server by default for backward compatibility
+  try {
+    return getMCPServer('willi-mako');
+  } catch (error) {
+    console.error('Failed to get Willi-Mako MCP server:', error);
+    throw new Error('Willi-Mako MCP server not configured. Please add it to MCP_SERVERS environment variable.');
+  }
+}
+
+interface MCPSession {
+  sessionId: string;
+  createdAt: number;
+  lastUsed: number;
+}
+
+class MCPClient {
+  private client: WilliMakoClient;
+  private session: MCPSession | null = null;
+  private authenticated: boolean = false;
+
+  constructor() {
+    this.client = new WilliMakoClient({
+      baseUrl: 'https://stromhaltig.de/api/v2',
+    });
+  }
+
+  async ensureAuthenticated(): Promise<void> {
+    if (this.authenticated) return;
+
+    if (!config.williMako.email || !config.williMako.password) {
+      throw new Error('Willi-Mako credentials not configured');
+    }
+
+    try {
+      await this.client.login({
+        email: config.williMako.email,
+        password: config.williMako.password,
+      });
+      this.authenticated = true;
+    } catch (error) {
+      console.error('Willi-Mako login failed:', error);
+      throw new Error('Failed to authenticate with Willi-Mako');
+    }
+  }
+
+  async getOrCreateSession(): Promise<string> {
+    if (this.session && Date.now() - this.session.lastUsed < 3600000) {
+      this.session.lastUsed = Date.now();
+      return this.session.sessionId;
+    }
+
+    await this.ensureAuthenticated();
+
+    try {
+      const response = await this.client.createSession({
+        ttlMinutes: 120,
+        preferences: {
+          companiesOfInterest: [],
+          preferredTopics: ['marktkommunikation', 'edifact'],
+        },
+      });
+
+      this.session = {
+        sessionId: response.data.sessionId,
+        createdAt: Date.now(),
+        lastUsed: Date.now(),
+      };
+
+      return this.session.sessionId;
+    } catch (error) {
+      console.error('Failed to create Willi-Mako session:', error);
+      throw error;
+    }
+  }
+
+  async semanticSearch(query: string, options?: { limit?: number }): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.semanticSearch({
+        query,
+        sessionId,
+        options: {
+          limit: options?.limit || 10,
+          outlineScoping: true,
+        },
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Semantic search failed:', error);
+      throw error;
+    }
+  }
+
+  async chat(message: string, options?: { sessionId?: string }): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = options?.sessionId || await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.chat({
+        message,
+        sessionId,
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Chat failed:', error);
+      throw error;
+    }
+  }
+
+  async reasoning(query: string, options?: { sessionId?: string }): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = options?.sessionId || await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.generateReasoning({
+        query,
+        sessionId,
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Reasoning failed:', error);
+      throw error;
+    }
+  }
+
+  async analyzeEdifact(message: string): Promise<any> {
+    await this.ensureAuthenticated();
+
+    try {
+      const response = await this.client.analyzeEdifactMessage({ message });
+      return response.data;
+    } catch (error) {
+      console.error('EDIFACT analysis failed:', error);
+      throw error;
+    }
+  }
+
+  async explainEdifact(message: string): Promise<any> {
+    await this.ensureAuthenticated();
+
+    try {
+      const response = await this.client.explainEdifactMessage({ message });
+      return response.data;
+    } catch (error) {
+      console.error('EDIFACT explanation failed:', error);
+      throw error;
+    }
+  }
+
+  async validateEdifact(message: string): Promise<any> {
+    await this.ensureAuthenticated();
+
+    try {
+      const response = await this.client.validateEdifactMessage({ message });
+      return response.data;
+    } catch (error) {
+      console.error('EDIFACT validation failed:', error);
+      throw error;
+    }
+  }
+
+  async chatEdifact(message: string, currentEdifactMessage: string, chatHistory?: Array<{ role: 'user' | 'assistant'; content: string }>): Promise<any> {
+    await this.ensureAuthenticated();
+
+    try {
+      const response = await this.client.chatAboutEdifactMessage({
+        message,
+        currentEdifactMessage,
+        chatHistory: chatHistory as any,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('EDIFACT chat failed:', error);
+      throw error;
+    }
+  }
+
+  async modifyEdifact(instruction: string, currentMessage: string): Promise<any> {
+    await this.ensureAuthenticated();
+
+    try {
+      const response = await this.client.modifyEdifactMessage({
+        instruction,
+        currentMessage,
+      });
+      return response.data;
+    } catch (error) {
+      console.error('EDIFACT modification failed:', error);
+      throw error;
+    }
+  }
+
+  async williNetzSearch(query: string, options?: { limit?: number }): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.williNetzSemanticSearch({
+        query,
+        sessionId,
+        options: {
+          limit: options?.limit || 10,
+        },
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Willi-Netz search failed:', error);
+      throw error;
+    }
+  }
+
+  async williNetzChat(message: string, contextSettings?: any): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.williNetzChat({
+        message,
+        sessionId,
+        contextSettings,
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Willi-Netz chat failed:', error);
+      throw error;
+    }
+  }
+
+  async combinedSearch(query: string, options?: { limit?: number }): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.combinedSemanticSearch({
+        query,
+        sessionId,
+        options: {
+          limit: options?.limit || 10,
+        },
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Combined search failed:', error);
+      throw error;
+    }
+  }
+
+  async combinedChat(message: string, options?: { sessionId?: string }): Promise<any> {
+    await this.ensureAuthenticated();
+    const sessionId = options?.sessionId || await this.getOrCreateSession();
+
+    try {
+      const response = await this.client.combinedChat({
+        message,
+        sessionId,
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Combined chat failed:', error);
+      throw error;
+    }
+  }
+}
+
+let mcpClient: MCPClient | null = null;
+
+export function getMCPClient(): MCPClient {
+  if (!mcpClient) {
+    mcpClient = new MCPClient();
+  }
+  return mcpClient;
+}
+
+export async function initializeMCP(): Promise<void> {
+  try {
+    const client = getMCPClient();
+    await client.ensureAuthenticated();
+    console.log('✓ MCP client initialized and authenticated');
+  } catch (error) {
+    console.error('Failed to initialize MCP client:', error);
+    throw error;
+  }
+}

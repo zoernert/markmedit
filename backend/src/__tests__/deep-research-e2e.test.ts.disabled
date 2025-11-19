@@ -1,0 +1,278 @@
+/**
+ * Deep Research E2E Tests
+ * 
+ * Tests für das komplette Deep Research System:
+ * 1. Web Search (Tavily) + MCP Integration
+ * 2. Section Enrichment
+ * 3. Research Batch mit Artefakten
+ */
+
+import { describe, it, expect, beforeAll } from '@jest/globals';
+import fetch from 'node-fetch';
+
+const BASE_URL = 'http://10.0.0.14:3001';
+const API_TIMEOUT = 60000; // 60s für AI-Operationen
+
+interface DeepResearchResponse {
+  success: boolean;
+  sources: {
+    web: Array<{
+      title: string;
+      url: string;
+      snippet: string;
+      score?: number;
+    }>;
+    mcp: Array<{
+      server: string;
+      toolName: string;
+      summary: string;
+      sourceCount?: number;
+    }>;
+  };
+  suggestions: Array<{
+    type: string;
+    content: string;
+    position?: string;
+    reasoning?: string;
+    sources?: string[];
+  }>;
+  metadata: {
+    researchDate: string;
+    queriesExecuted: number;
+    sourcesAnalyzed: number;
+  };
+}
+
+describe('Deep Research E2E Tests', () => {
+  let testDocumentId: string;
+
+  beforeAll(async () => {
+    // Erstelle Test-Dokument
+    const response = await fetch(`${BASE_URL}/api/documents`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: 'Deep Research E2E Test - Energiespeicher',
+        content: `# Energiespeicher in Deutschland
+
+## Einleitung
+Energiespeicher spielen eine wichtige Rolle in der Energiewende.
+
+## Aktuelle Entwicklungen
+Die Technologie entwickelt sich rasant weiter.
+
+## Marktübersicht
+Verschiedene Anbieter sind am Markt aktiv.
+`,
+      }),
+    });
+
+    const data = await response.json();
+    testDocumentId = data.id;
+    console.log(`✓ Test-Dokument erstellt: ${testDocumentId}`);
+  });
+
+  it('Test 1: Web + MCP Deep Research', async () => {
+    console.log('\n🔬 Test 1: Web + MCP Deep Research');
+    
+    const response = await fetch(`${BASE_URL}/api/ai/deep-research`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        query: 'Aktuelle Entwicklungen Batteriespeicher Deutschland 2025',
+        searchScope: {
+          web: true,
+          mcp: ['willi-mako', 'powabase'],
+        },
+        maxSources: 8,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const data = await response.json() as DeepResearchResponse;
+    
+    console.log('Sources found:');
+    console.log(`  - Web: ${data.sources.web.length}`);
+    console.log(`  - MCP: ${data.sources.mcp.length}`);
+    console.log(`  - Suggestions: ${data.suggestions.length}`);
+
+    // Validierungen
+    expect(data.success).toBe(true);
+    expect(data.sources).toBeDefined();
+    expect(data.suggestions).toBeDefined();
+    expect(data.suggestions.length).toBeGreaterThan(0);
+    
+    // Web-Quellen sollten gefunden werden (Tavily)
+    if (data.sources.web.length > 0) {
+      console.log('✓ Web-Suche funktional (Tavily)');
+      expect(data.sources.web[0]).toHaveProperty('url');
+      expect(data.sources.web[0]).toHaveProperty('snippet');
+    } else {
+      console.warn('⚠️  Keine Web-Quellen gefunden (Tavily API Key Problem?)');
+    }
+
+    // MCP-Quellen sollten gefunden werden
+    if (data.sources.mcp.length > 0) {
+      console.log('✓ MCP-Integration funktional');
+      expect(data.sources.mcp[0]).toHaveProperty('server');
+    } else {
+      console.warn('⚠️  Keine MCP-Quellen gefunden');
+    }
+
+    // Suggestions validieren
+    expect(data.suggestions[0]).toHaveProperty('type');
+    expect(data.suggestions[0]).toHaveProperty('content');
+    expect(data.suggestions[0]).toHaveProperty('reasoning');
+
+    console.log('\n✅ Test 1 bestanden');
+  }, API_TIMEOUT);
+
+  it('Test 2: Section Enrichment', async () => {
+    console.log('\n✨ Test 2: Section Enrichment');
+
+    const selectedText = 'Die Technologie entwickelt sich rasant weiter.';
+    
+    const response = await fetch(`${BASE_URL}/api/ai/enrich-section`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        selectedText,
+        beforeContext: '## Aktuelle Entwicklungen\n',
+        afterContext: '\n## Marktübersicht',
+        enrichmentGoal: 'expand',
+        searchScope: {
+          web: true,
+          mcp: ['willi-mako', 'powabase'],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const data = await response.json() as DeepResearchResponse;
+
+    console.log('Enrichment results:');
+    console.log(`  - Sources: ${data.sources.web.length + data.sources.mcp.length}`);
+    console.log(`  - Suggestions: ${data.suggestions.length}`);
+
+    expect(data.success).toBe(true);
+    expect(data.suggestions.length).toBeGreaterThan(0);
+    
+    // Suggestion sollte fokussiert sein (nur 1-2 für Section)
+    expect(data.suggestions.length).toBeLessThanOrEqual(3);
+
+    console.log('\n✅ Test 2 bestanden');
+  }, API_TIMEOUT);
+
+  it('Test 3: Research Batch mit Artefakten', async () => {
+    console.log('\n📚 Test 3: Research Batch');
+
+    // Erstelle Test-Artefakte
+    const artifact1 = await fetch(`${BASE_URL}/api/artifacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        type: 'note',
+        content: 'Wichtig: Neue Regelungen für Heimspeicher ab 2025',
+      }),
+    });
+    const art1 = await artifact1.json();
+
+    const artifact2 = await fetch(`${BASE_URL}/api/artifacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        type: 'note',
+        content: 'Marktanalyse: Tesla Powerwall vs BYD vs Sonnen',
+      }),
+    });
+    const art2 = await artifact2.json();
+
+    console.log(`✓ Artefakte erstellt: ${art1.id}, ${art2.id}`);
+
+    // Research Batch durchführen
+    const response = await fetch(`${BASE_URL}/api/ai/research-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        artifactIds: [art1.id, art2.id],
+        researchQuery: 'Energiespeicher Deutschland Regulierung',
+        searchScope: {
+          web: true,
+          mcp: ['willi-mako'],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+
+    const data = await response.json();
+
+    console.log('Batch results:');
+    console.log(`  - Artifacts analyzed: ${data.artifactsAnalyzed}`);
+    console.log(`  - Topics extracted: ${data.extractedTopics?.length || 0}`);
+    console.log(`  - Suggestions: ${data.suggestions.length}`);
+
+    expect(data.success).toBe(true);
+    expect(data.artifactsAnalyzed).toBe(2);
+    expect(data.extractedTopics).toBeDefined();
+    expect(data.suggestions.length).toBeGreaterThan(0);
+
+    console.log('\n✅ Test 3 bestanden');
+  }, API_TIMEOUT);
+
+  it('Test 4: Error Handling - Keine Quellen ausgewählt', async () => {
+    console.log('\n⚠️  Test 4: Error Handling');
+
+    const response = await fetch(`${BASE_URL}/api/ai/deep-research`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        query: 'Test Query',
+        searchScope: {
+          web: false,
+          mcp: [],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const data = await response.json();
+    expect(data.error).toContain('Mindestens eine Quelle');
+
+    console.log('✅ Test 4 bestanden');
+  });
+
+  it('Test 5: Graceful Degradation - Nur MCP ohne Tavily', async () => {
+    console.log('\n🔄 Test 5: Graceful Degradation');
+
+    const response = await fetch(`${BASE_URL}/api/ai/deep-research`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        documentId: testDocumentId,
+        query: 'Marktkommunikation GPKE',
+        searchScope: {
+          web: false, // Nur MCP
+          mcp: ['willi-mako'],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const data = await response.json() as DeepResearchResponse;
+
+    expect(data.success).toBe(true);
+    expect(data.sources.web.length).toBe(0); // Kein Web
+    expect(data.sources.mcp.length).toBeGreaterThan(0); // MCP funktioniert
+
+    console.log('✅ Test 5 bestanden - MCP ohne Web funktional');
+  }, API_TIMEOUT);
+});

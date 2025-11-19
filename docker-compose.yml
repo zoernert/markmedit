@@ -1,0 +1,74 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: markmedit-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_OPTIONS=--max-old-space-size=2048
+    ports:
+      - "${PORT:-3001}:3001"
+    volumes:
+      - ./data:/app/data
+    networks:
+      - markmedit
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: markmedit-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - markmedit
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.1
+    container_name: markmedit-qdrant
+    restart: unless-stopped
+    ports:
+      - "6335:6333"  # HTTP API (mapped to 6335 to avoid conflict)
+      - "6336:6334"  # gRPC API
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    environment:
+      - QDRANT__SERVICE__GRPC_PORT=6334
+    networks:
+      - markmedit
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: PostgreSQL statt SQLite
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: markmedit-db
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_DB: markmedit
+  #     POSTGRES_USER: markmedit
+  #     POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - markmedit
+
+networks:
+  markmedit:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  qdrant_storage:
