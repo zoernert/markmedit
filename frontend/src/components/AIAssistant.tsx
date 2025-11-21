@@ -592,9 +592,27 @@ export function AIAssistant({ documentId: _documentId, selectedText, documentCon
                   setRejectedSuggestions(prev => new Set([...prev, index]));
                 }}
                 onRequestDetails={(suggestion, _index) => {
-                  // Add a message asking for more details about this suggestion
+                  // Build the details request message
                   const message = `Bitte erkläre mir genauer, warum die Änderung in "${suggestion.section}" sinnvoll ist und zeige mir eine ausführlichere Vorschau.`;
+
+                  // Populate the input so the user still sees the composed question
                   setInput(message);
+
+                  // If no chat request is currently pending, send it immediately.
+                  // This provides the expected UX: clicking "Details anfordern" triggers
+                  // an AI request and the streaming/progress UI becomes visible.
+                  try {
+                    if (!chatMutation.isPending && !streamingChat.isProcessing) {
+                      // Trigger the same mutation/send flow as the send button
+                      chatMutation.mutate(message);
+                    } else {
+                      // If a request is already running, keep the message in the input
+                      // so the user can submit it once the current request finishes.
+                      console.log('[AIAssistant] Request in progress, queued details message in input.');
+                    }
+                  } catch (err) {
+                    console.error('Failed to auto-send details request:', err);
+                  }
                 }}
                 onApplyAll={handleApplySuggestions}
                 isApplying={isApplyingSuggestions}
